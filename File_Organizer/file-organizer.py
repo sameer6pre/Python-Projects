@@ -2,6 +2,10 @@ import os
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import shutil
+import os
+import shutil
+from watchdog.events import FileSystemEventHandler
+
 class MyHandler(FileSystemEventHandler):
     def on_created(self, event):
         if not event.is_directory:
@@ -20,7 +24,13 @@ class MyHandler(FileSystemEventHandler):
             other_files = r"C:\Users\Precious pc\Documents\other_files"
             # Get the destination directory for the file extension or use the default
             destination = destination_mapping.get(file_extension, other_files)
-            # Move the file to the determined destination
+            # Validate the file_path and destination
+            if not os.path.isfile(file_path):
+                print(f"Error: {file_path} is not a valid file.")
+                return
+            if not os.path.isdir(destination):
+                print(f"Error: {destination} is not a valid directory.")
+                return
             # Check if file already exists in destination & delete it. 
             if os.path.exists(os.path.join(destination, file_name)):
                 print(f"File {file_name} already exists in the destination. Deleting it.")
