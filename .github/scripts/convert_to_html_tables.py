@@ -61,6 +61,11 @@ def find_table_points(lines):
 
 
 def main():
+	import re
+	import html
+	import urllib.parse
+	import sys
+
 	"""
 	Update the index.md file with the latest contributors data.
 
@@ -81,72 +86,118 @@ def main():
 	TARGET_FILE = 'index.md'
 	CONTRIBUTORS_LOG = '.github/data/contributors-log.json'
 
-	# Retrieving data from log file
-	with open(CONTRIBUTORS_LOG, 'r') as json_file:
-		data = json.load(json_file)
+	# Load JSON safely with error handling
+	try:
+		with open(CONTRIBUTORS_LOG, 'r') as json_file:
+			data = json.load(json_file)
+	except FileNotFoundError:
+		print(f"Contributors log not found: {CONTRIBUTORS_LOG}")
+		sys.exit(1)
+	except ValueError:
+		print(f"Invalid JSON in {CONTRIBUTORS_LOG}")
+		sys.exit(1)
 
 	# Reading lines from the file
-	with open(TARGET_FILE, 'r') as file:
-		lines = file.readlines()
+	try:
+		with open(TARGET_FILE, 'r') as file:
+			lines = file.readlines()
+	except FileNotFoundError:
+		print(f"Target file not found: {TARGET_FILE}")
+		sys.exit(1)
 
 	# Calculating Stating and ending points of the targeted table
 	table_start, table_end = find_table_points(lines)
 
 	# Creating HTML table header to replace md table
 	table_header = list()
-	table_header.append('<table>\n')
-	table_header.append('\t<tr align="center">\n')
-	table_header.append('\t\t<th>Project Title</th>\n')
-	table_header.append('\t\t<th>Contributor Names</th>\n')
-	table_header.append('\t\t<th>Pull Requests</th>\n')
-	table_header.append('\t\t<th>Demo</th>\n')
-	table_header.append('\t</tr>\n')
+	table_header.append('&lt;table>\n')
+	table_header.append('\t&lt;tr align="center">\n')
+	table_header.append('\t\t&lt;th>Project Title&lt;/th>\n')
+	table_header.append('\t\t&lt;th>Contributor Names&lt;/th>\n')
+	table_header.append('\t\t&lt;th>Pull Requests&lt;/th>\n')
+	table_header.append('\t\t&lt;th>Demo&lt;/th>\n')
+	table_header.append('\t&lt;/tr>\n')
 
 	# Initializing empty list for lines
 	updated_lines = list()
+
+	# Regular expressions / helpers
+	username_re = re.compile(r'^[A-Za-z0-9-]+$')
 
 	# Iterating over log to update target file
 	for title, details in data.items():
 
 		# Processing contributors-names
-		contributors_names = details['contributor-name']
-		contributors_names_list = [
-			f'<a href="https://github.com/{name}" title="goto {name} profile">{name}</a>' for name in contributors_names]
+		contributors_names = details.get('contributor-name', [])
+		contributors_names_list = []
+		for name in contributors_names:
+			name_str = str(name)
+			display = html.escape(name_str)
+			# PRECOGS_FIX: Build a safe href and HTML-escape attribute and content to prevent attribute/context breakout
+			if username_re.match(name_str):
+				href = f"https://github.com/{urllib.parse.quote(name_str)}"
+			else:
+				# encode anything unsafe; do not allow raw user content to inject attributes
+				href = f"https://github.com/{urllib.parse.quote(name_str)}"
+			contributors_names_list.append(f'&lt;a href="{html.escape(href, quote=True)}" title="goto {display} profile">{display}&lt;/a>')
 		contributors_names_output = ', '.join(contributors_names_list)
 
 		# Processing pull-requests
-		pull_requests = details['pull-request-number']
-		pull_requests_list = [
-			f'<a href="https://github.com/{REPO_NAME}/pull/{pr}" title="visit pr \#{pr}">{pr}</a>' for pr in pull_requests]
+		pull_requests = details.get('pull-request-number', [])
+		pull_requests_list = []
+		for pr in pull_requests:
+			pr_str = str(pr)
+			# PRECOGS_FIX: Only allow numeric PR identifiers to form links; sanitize otherwise
+			if pr_str.isdigit():
+				if REPO_NAME:
+					href = f"https://github.com/{urllib.parse.quote(REPO_NAME)}/pull/{pr_str}"
+				else:
+					href = f"/pull/{pr_str}"
+			else:
+				href = '#'
+			pull_requests_list.append(f'&lt;a href="{html.escape(href, quote=True)}" title="visit pr #{html.escape(pr_str)}">{html.escape(pr_str)}&lt;/a>')
 		pull_requests_output = ', '.join(pull_requests_list)
 
 		# Processing demo-path
-		demo_path = details['demo-path']
-		if ' ' in demo_path:
-			demo_path = '%20'.join(demo_path.split())
-		demo_path_output = f'<a href="{demo_path}" title="view the result of {title}">/{REPO_NAME}/{title}/</a>'
-		if title == 'root' or title == '{init}':
-			demo_path_output = f'<a href="{demo_path}" title="view the result of {title}">/{REPO_NAME}/</a>'
-		elif title == '{workflows}':
-			demo_path_output = f'<a href="{demo_path}" title="view the result of {title}">/{REPO_NAME}/.github/workflows</a>'
-		elif title == '{scripts}':
-			demo_path_output = f'<a href="{demo_path}" title="view the result of {title}">/{REPO_NAME}/.github/scripts</a>'
-		elif title == '{others}':
-			demo_path_output = f'<a href="{demo_path}" title="view the result of {title}">/{REPO_NAME}/.github</a>'
+		demo_path = str(details.get('demo-path', ''))
+		# Normalize spaces
+		demo_path = demo_path.replace(' ', '%20')
+		parsed = urllib.parse.urlparse(demo_path)
+		# Allow only http(s) or relative paths (no javascript:, data:, vbscript:, etc.)
+		if parsed.scheme in ('', 'http', 'https'):
+			href = demo_path
+		else:
+			href = '#'
 
-		# Appending all data together
-		updated_lines.append('\t<tr align="center">\n')
-		updated_lines.append(f'\t\t<td>{title}</td>\n')
-		updated_lines.append(f'\t\t<td>{contributors_names_output}</td>\n')
-		updated_lines.append(f'\t\t<td>{pull_requests_output}</td>\n')
-		updated_lines.append(f'\t\t<td>{demo_path_output}</td>\n')
-		updated_lines.append(f'\t</tr>\n')
+		# Build display label (escaped)
+		display_title = html.escape(str(title))
+		display_repo = html.escape(str(REPO_NAME)) if REPO_NAME else ''
+		if title == 'root' or title == '{init}':
+			label = f'/{display_repo}/'
+		elif title == '{workflows}':
+			label = f'/{display_repo}/.github/workflows'
+		elif title == '{scripts}':
+			label = f'/{display_repo}/.github/scripts'
+		elif title == '{others}':
+			label = f'/{display_repo}/.github'
+		else:
+			label = f'/{display_repo}/{display_title}/'
+
+		demo_path_output = f'&lt;a href="{html.escape(href, quote=True)}" title="view the result of {display_title}">{label}&lt;/a>'
+
+		# Appending all data together (escape title displayed in cell)
+		updated_lines.append('\t&lt;tr align="center">\n')
+		updated_lines.append(f'\t\t&lt;td>{html.escape(str(title))}&lt;/td>\n')
+		updated_lines.append(f'\t\t&lt;td>{contributors_names_output}&lt;/td>\n')
+		updated_lines.append(f'\t\t&lt;td>{pull_requests_output}&lt;/td>\n')
+		updated_lines.append(f'\t\t&lt;td>{demo_path_output}&lt;/td>\n')
+		updated_lines.append(f'\t&lt;/tr>\n')
 
 	# Table footer
-	table_footer = ['</table>\n']
+	table_footer = ['&lt;/table>\n']
 
 	# Updating the lines with updated data
-	lines[table_start+1:table_end] = table_header+updated_lines+table_footer
+	lines[table_start+1:table_end] = table_header + updated_lines + table_footer
 
 	# Updating the target file
 	with open(TARGET_FILE, 'w') as file:
@@ -154,7 +205,3 @@ def main():
 
 	# Printing Success Message
 	print(f"Updated '{TARGET_FILE}' Successfully")
-
-
-if __name__ == '__main__':
-	main()
